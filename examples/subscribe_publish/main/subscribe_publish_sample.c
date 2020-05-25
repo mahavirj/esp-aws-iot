@@ -157,6 +157,28 @@ void disconnectCallbackHandler(AWS_IoT_Client *pClient, void *data) {
     }
 }
 
+#include "esp_heap_task_info.h"
+static void esp_dump_per_task_heap_info(void)
+{
+    heap_task_stat_t tstat = {};
+    bool begin = true;
+    printf("Task Heap Utilisation Stats:\n");
+    printf("||\tTask\t\t|\tPeak DRAM\t|\tPeak IRAM\t|| \n");
+    while (1) {
+        size_t ret = heap_caps_get_next_task_stat(&tstat, begin);
+        if (ret == 0) {
+            printf("\n");
+            break;
+        }
+        const char *task_name = tstat.task ? pcTaskGetTaskName(tstat.task) : "Pre-Scheduler allocs";
+        if (!strcmp(task_name, "wifi") || !strcmp(task_name, "tiT") || !strcmp(task_name, "aws_iot_task")) {
+            printf("||\t%-12s\t|\t%-5d\t\t|\t%-5d\t\t|| \n",
+                        task_name, tstat.peak[0], tstat.peak[1]);
+        }
+        begin = false;
+    }
+}
+
 void aws_iot_task(void *param) {
     char cPayload[100];
 
@@ -278,6 +300,16 @@ void aws_iot_task(void *param) {
         }
 
         ESP_LOGI(TAG, "Stack remaining for task '%s' is %d bytes", pcTaskGetTaskName(NULL), uxTaskGetStackHighWaterMark(NULL));
+
+        const int min_free_8bit_cap = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+        const int min_free_32bit_cap = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_32BIT);
+
+        esp_dump_per_task_heap_info();
+        printf("System Heap Utilisation Stats:\n");
+        printf("||   Miniumum Free DRAM\t|   Minimum Free IRAM\t|| \n");
+        printf("||\t%-6d\t\t|\t%-6d\t\t||\n",
+                    min_free_8bit_cap, (min_free_32bit_cap - min_free_8bit_cap));
+
         vTaskDelay(1000 / portTICK_RATE_MS);
         sprintf(cPayload, "%s : %d ", "hello from ESP32 (QOS0)", i++);
         paramsQOS0.payloadLen = strlen(cPayload);
@@ -328,5 +360,5 @@ void app_main()
     ESP_ERROR_CHECK( err );
 
     initialise_wifi();
-    xTaskCreatePinnedToCore(&aws_iot_task, "aws_iot_task", 9216, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&aws_iot_task, "aws_iot_task", 9216, NULL, 5, NULL, 0);
 }
